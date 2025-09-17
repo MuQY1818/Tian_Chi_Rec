@@ -20,7 +20,7 @@ DATA_CONFIG = {
     
     # 时间配置
     "predict_date": "2014-12-19",
-    "train_end_date": "2014-12-15",
+    "train_end_date": "2014-12-17",
     "validation_end_date": "2014-12-18",
     
     # 时间衰减参数
