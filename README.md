@@ -1,90 +1,51 @@
-# 天池推荐算法项目
+# 天池推荐算法竞赛
 
-## 🎯 项目概述
-天池新鲜电商推荐算法比赛 - 基于用户行为数据预测用户购买行为
+## 任务描述
 
-## 📁 项目结构
+预测用户在2014年12月19日对商品子集P的购买行为。
 
-```
-├── src/                          # 核心源码模块
-│   ├── traditional/              # 传统推荐算法
-│   └── graphrec/                # 图神经网络推荐
-├── scripts/                     # 执行脚本
-│   ├── preprocessing/           # 数据预处理
-│   ├── feature_engineering/     # 特征工程
-│   ├── modeling/               # 模型训练
-│   ├── submission/             # 结果提交
-│   └── utils/                  # 工具脚本
-├── cpp_tools/                  # C++高性能工具
-├── dataset/                    # 数据集
-├── outputs/                    # 输出结果
-├── docs/                      # 项目文档
-└── config/                    # 配置文件
-```
+## 数据文件
 
-## 🚀 快速开始
+- `dataset/tianchi_fresh_comp_train_item_online.txt`: 商品子集P
+- `dataset/tianchi_fresh_comp_train_user_online_partA.txt`: 用户行为数据A
+- `dataset/tianchi_fresh_comp_train_user_online_partB.txt`: 用户行为数据B
 
-### 1. 数据预处理
+## 算法流程
+
+### 1. 候选集生成 (`1_candidate_generation.py`)
+- 从全量用户行为数据中筛选商品子集P相关的交互
+- 生成训练样本：2014-12-18的购买行为作为正样本标签
+- 生成预测候选集：历史有交互的用户-商品对
+
+### 2. 特征工程 (`2_feature_engineering.py`)
+- **用户特征**: 活跃度、购买率、时间模式、类别偏好
+- **商品特征**: 流行度、转化率、最近趋势
+- **交互特征**: 用户对商品的历史行为统计
+
+### 3. 模型训练 (`3_lgbm_training.py`)
+- 使用LightGBM训练二分类模型
+- 预测用户-商品购买概率
+- 为每个用户选择top-5商品生成最终推荐
+
+## 运行方法
+
 ```bash
-# 创建小数据集用于测试
-python scripts/preprocessing/create_small_dataset.py
+# 1. 生成候选集
+python 1_candidate_generation.py
 
-# 统计用户数量
-python scripts/preprocessing/quick_user_count.py
+# 2. 特征工程
+python 2_feature_engineering.py
+
+# 3. 训练和预测
+python 3_lgbm_training.py
 ```
 
-### 2. 特征工程
-```bash
-# Python版本 (丰富特征)
-python scripts/feature_engineering/user_feature_builder.py
+## 输出文件
 
-# C++版本 (高性能)
-cd cpp_tools
-./build_cpp.sh
-./fast_user_extractor
-```
+- `submission.txt`: 最终提交文件，格式为 user_id\titem_id
+- 中间文件: `train_candidates.csv`, `pred_candidates.csv`, `train_features.csv`, `pred_features.csv`
 
-### 3. 模型训练
-```bash
-# 传统推荐算法
-python scripts/modeling/traditional_train.py
+## 环境要求
 
-# 简化训练版本
-python scripts/modeling/simple_train.py
-```
-
-### 4. 生成提交
-```bash
-# 快速提交生成
-python scripts/submission/full_submission_generator.py
-```
-
-## 📊 算法对比
-
-| 算法类型 | 实现位置 | 性能 | 特点 |
-|----------|----------|------|------|
-| ItemCF | `src/traditional/itemcf.py` | 中等 | 协同过滤 |
-| 流行度 | `src/traditional/popularity.py` | 快 | 简单有效 |
-| 矩阵分解 | `src/traditional/matrix_factorization.py` | 慢 | 效果好 |
-| 融合模型 | `src/traditional/ensemble.py` | 中等 | 综合最优 |
-
-## 🛠️ 开发工具
-
-- **C++高性能处理器**: `cpp_tools/fast_user_extractor.cpp`
-- **特征对比分析**: `docs/design/feature_comparison.md`
-- **系统设计文档**: `docs/design/cpp_preprocessor_design.md`
-
-## 📈 实验结果
-
-- 用户数量: ~100万
-- 数据规模: 11.65亿行交互数据
-- 最佳算法: 传统融合模型
-- 处理速度: C++版本提升24倍
-
-## 🔧 配置说明
-
-项目配置文件位于 `config/` 目录，包含数据路径、模型参数等设置。
-
-## 📝 更新日志
-
-详细更新记录请查看 `CLAUDE.md` 文件。
+- Python 3.7+
+- pandas, numpy, lightgbm, scikit-learn, tqdm

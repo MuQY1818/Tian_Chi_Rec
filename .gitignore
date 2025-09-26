@@ -73,3 +73,23 @@ simple_baseline_results.csv
 *.tmp
 *.temp
 *.log
+
+# 编译文件
+cpp_data_extractor
+cpp_optimizer
+*.o
+*.a
+*.exe
+
+# 大文件
+*.pth
+best_neural_recommender.pth
+
+# Jupyter相关
+.ipynb_checkpoints/
+
+# 开发工具
+.vscode/
+*_backup.py
+*_old.py
+debug_*

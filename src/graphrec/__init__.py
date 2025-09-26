@@ -1,2 +1,0 @@
-# Graph recommendation package init.
-
