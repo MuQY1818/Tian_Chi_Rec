@@ -43,7 +43,30 @@ python 2_feature_engineering.py   # 特征工程
 python 3_lgbm_training.py         # 模型训练预测
 ```
 
+### 2024-09-26: 数据泄露问题修复
+- **问题发现**: AUC高达0.999但F1仅0.0619，存在严重数据泄露
+- **根本原因**: 候选集构造导致训练验证分布不一致
+  - **正样本**: 62%来自历史无交互的"冷启动"购买（ui_days_since_last_action=999）
+  - **负样本**: 98%来自最近7天有交互但未购买的用户-商品对
+  - **泄露机制**: 模型学到"时间间隔大→正样本，时间间隔小→负样本"的虚假规律
+- **修复方案**:
+  - **候选集对齐**: 新增ALIGN_RECALL=1，训练和预测使用相同召回策略
+  - **正样本过滤**: 新增POS_FILTER_IN_RECALL=1，仅保留召回范围内的正样本
+  - **特征清理**: 支持DROP_TIME_GAP_FEATURES=1排除强时间依赖特征
+  - **配置增强**: config.ini新增[recall]段，支持灵活配置
+- **技术改进**:
+  - 三个脚本都新增configparser支持，统一配置管理
+  - 环境变量和配置文件双重配置机制
+  - 时间窗口可配置化（label_date参数）
+  - 负样本采样策略优化（分桶采样）
+- **影响文件**:
+  - 修改: 1_candidate_generation.py, 2_feature_engineering.py, 3_lgbm_training.py
+  - 新增: config/config.ini [recall]段
+  - 更新: README.md (新增数据泄露修复说明)
+  - 更新: .gitignore (排除dataset/、*.csv等文件)
+
 ## 代码规范
 - 无复杂目录结构，保持项目根目录简洁
 - 代码中不使用emoji，保持专业性
 - 每个脚本功能单一明确，便于调试
+- 统一使用configparser + 环境变量配置机制
