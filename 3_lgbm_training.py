@@ -150,6 +150,57 @@ def downsample_negatives(
     return ds
 
 
+def downsample_negatives_bucketed(
+    df: pd.DataFrame,
+    neg_pos_ratio: int = 20,
+    bounds: list[int] | None = None,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """按 ui_days_since_last_action 分桶的负采样。每个桶内采样 pos_bucket*ratio 个负样本。
+    bounds 例： [1,3,7] -> 桶: (-inf,1], [2,3], [4,7], [8,inf]
+    """
+    if bounds is None:
+        bounds = [1, 3, 7]
+    pos = df[df["label"] == 1].copy()
+    neg = df[df["label"] == 0].copy()
+    if len(pos) == 0 or len(neg) == 0 or "ui_days_since_last_action" not in df.columns:
+        return df
+    # 计算桶 id
+    def bucketize(v: float) -> int:
+        if pd.isna(v):
+            return len(bounds)
+        val = int(v)
+        for i, b in enumerate(bounds):
+            if val <= b:
+                return i
+        return len(bounds)
+    pos_b = pos.copy()
+    pos_b["_b"] = pos_b["ui_days_since_last_action"].apply(bucketize)
+    neg_b = neg.copy()
+    neg_b["_b"] = neg_b["ui_days_since_last_action"].apply(bucketize)
+    parts = []
+    rng = np.random.RandomState(random_state)
+    for i in sorted(pos_b["_b"].unique()):
+        p_cnt = int((pos_b["_b"] == i).sum())
+        need = int(p_cnt * neg_pos_ratio)
+        g = neg_b[neg_b["_b"] == i]
+        if len(g) == 0 or need <= 0:
+            continue
+        if len(g) <= need:
+            parts.append(g)
+        else:
+            parts.append(g.sample(n=need, random_state=rng.randint(1e9)))
+    if parts:
+        neg_s = pd.concat(parts, axis=0, ignore_index=True)
+    else:
+        return downsample_negatives(df, neg_pos_ratio=neg_pos_ratio, by_user=False, random_state=random_state)
+    ds = pd.concat([pos, neg_s], axis=0, ignore_index=True).sample(frac=1.0, random_state=random_state)
+    print(
+        f"负采样(分桶): pos={len(pos)}, neg={len(neg)} -> neg_sample={len(neg_s)}, 合计={len(ds)}，比例 1:{len(neg_s)/len(pos):.2f}, bounds={bounds}"
+    )
+    return ds
+
+
 def kfold_train_predict(X, y, pred_features, feature_columns, n_splits=5, random_state=42, groups=None, early_stopping_rounds=100, fast_params=False, class_weight="balanced"):
     params = dict(
         objective="binary",
@@ -860,12 +911,25 @@ def main():
     if DOWNSAMPLE_NEG:
         NEG_MAX_GAP_DAYS = os.environ.get("NEG_MAX_GAP_DAYS")
         neg_gap = int(NEG_MAX_GAP_DAYS) if (NEG_MAX_GAP_DAYS and NEG_MAX_GAP_DAYS.isdigit()) else None
-        train_df_for_train = downsample_negatives(
-            train_features,
-            neg_pos_ratio=NEG_POS_RATIO,
-            by_user=False,
-            neg_max_gap_days=neg_gap,
-        )
+        BUCKETED_NEG = os.environ.get("BUCKETED_NEG", "1") == "1"
+        if BUCKETED_NEG:
+            # 分桶边界，可通过 RECENCY_BOUNDS="1,3,7" 覆盖
+            bounds_env = os.environ.get("RECENCY_BOUNDS", "1,3,7")
+            try:
+                bounds = [int(x.strip()) for x in bounds_env.split(",") if x.strip()]
+            except Exception:
+                bounds = [1, 3, 7]
+            # 先可选做“近邻过滤”
+            df_base = downsample_negatives(train_features, neg_pos_ratio=NEG_POS_RATIO, by_user=False, neg_max_gap_days=neg_gap)
+            # 再按分桶等比采样一轮，进一步平衡
+            train_df_for_train = downsample_negatives_bucketed(df_base, neg_pos_ratio=NEG_POS_RATIO, bounds=bounds)
+        else:
+            train_df_for_train = downsample_negatives(
+                train_features,
+                neg_pos_ratio=NEG_POS_RATIO,
+                by_user=False,
+                neg_max_gap_days=neg_gap,
+            )
 
     # 同步使用 feat_cols 作为训练特征列，保证与预测阶段一致
     X2 = train_df_for_train[feat_cols]

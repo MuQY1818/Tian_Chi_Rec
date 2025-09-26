@@ -13,6 +13,7 @@
 """
 
 import os
+import configparser
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
@@ -27,6 +28,35 @@ def _check_conda_env():
         raise SystemExit(
             f"当前环境为 '{env}'，请激活 conda 环境 'kaggle_env' 后再运行。"
         )
+
+def _load_config_from_ini(path: str = "config/config.ini"):
+    """从 INI 加载配置并写入环境变量（仅在未设置时生效）。"""
+    if not os.path.exists(path):
+        return
+    cfg = configparser.ConfigParser()
+    cfg.read(path)
+    if "training" in cfg:
+        sec = cfg["training"]
+        for k, env in {
+            "label_date": "LABEL_DATE",
+        }.items():
+            if k in sec:
+                os.environ.setdefault(env, sec[k])
+    if "strategy" in cfg:
+        sec = cfg["strategy"]
+        for k, env in {
+            "cart_days_max": "CART_DAYS_MAX",
+        }.items():
+            if k in sec:
+                os.environ.setdefault(env, sec[k])
+    if "recall" in cfg:
+        sec = cfg["recall"]
+        for k, env in {
+            "align_recall": "ALIGN_RECALL",
+            "pos_filter_in_recall": "POS_FILTER_IN_RECALL",
+        }.items():
+            if k in sec:
+                os.environ.setdefault(env, sec[k])
 
 
 def load_item_subset():
@@ -94,8 +124,13 @@ def generate_training_and_prediction_candidates(
     - 可选：热门回填（默认关闭，避免爆炸）
     """
 
-    label_date = date(2014, 12, 18)
-    pred_date = date(2014, 12, 19)
+    # 允许通过环境变量/配置覆盖标签日
+    label_env = os.environ.get("LABEL_DATE")
+    if label_env:
+        label_date = datetime.strptime(label_env, "%Y%m%d").date()
+    else:
+        label_date = date(2014, 12, 18)
+    pred_date = label_date + timedelta(days=1)
 
     # 时间窗口
     train_recent_win = (label_date - timedelta(days=7), label_date - timedelta(days=1))  # 12-11~12-17
@@ -168,6 +203,17 @@ def generate_training_and_prediction_candidates(
             if len(s) < cap:
                 s.add(i)
 
+    # 是否仅保留召回内的正样本
+    align_recall = os.environ.get("ALIGN_RECALL", "1") == "1"
+    pos_filter_in_recall = os.environ.get("POS_FILTER_IN_RECALL", "1") == "1"
+
+    if align_recall and pos_filter_in_recall:
+        recall_union = train_recent_pairs | train_strong_pairs
+        filtered_label_pairs = train_label_pairs & recall_union
+        dropped = len(train_label_pairs) - len(filtered_label_pairs)
+        print(f"正样本召回过滤: {len(train_label_pairs)} -> {len(filtered_label_pairs)} (丢弃 {dropped})")
+        train_label_pairs = filtered_label_pairs
+
     # 先加正样本，再强信号，再最近交互
     _add_pairs(train_candidates, train_label_pairs, max_per_user)
     _add_pairs(train_candidates, train_strong_pairs, max_per_user)
@@ -233,6 +279,7 @@ def main():
     print("=" * 50)
 
     _check_conda_env()
+    _load_config_from_ini()
 
     # 1. 加载商品子集P
     target_items, _ = load_item_subset()

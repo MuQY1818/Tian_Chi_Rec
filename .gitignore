@@ -45,8 +45,10 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# 数据集
+# 数据集和输出文件
 dataset/
+data/
+viz/
 *.txt
 *.csv
 *.json
@@ -55,6 +57,13 @@ dataset/
 *.jpg
 *.jpeg
 *.pdf
+*.parquet
+*.pt
+submission.txt
+train_candidates.csv
+pred_candidates.csv
+train_features.csv
+pred_features.csv
 
 # 项目特定
 logs/

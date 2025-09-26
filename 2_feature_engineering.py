@@ -6,6 +6,7 @@
 
 import os
 import time
+import configparser
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
@@ -19,6 +20,17 @@ def _check_conda_env():
         raise SystemExit(
             f"当前环境为 '{env}'，请激活 conda 环境 'kaggle_env' 后再运行。"
         )
+
+
+def _load_config_from_ini(path: str = "config/config.ini"):
+    if not os.path.exists(path):
+        return
+    cfg = configparser.ConfigParser()
+    cfg.read(path)
+    if "training" in cfg:
+        sec = cfg["training"]
+        if "label_date" in sec:
+            os.environ.setdefault("LABEL_DATE", sec["label_date"]) 
 
 
 def _iter_daily_files(daily_dir: str):
@@ -357,7 +369,13 @@ def _build_features_for(candidates: pd.DataFrame, reference_date: date) -> pd.Da
 
 def build_features(candidates: pd.DataFrame, is_training: bool = True) -> pd.DataFrame:
     print(f"构建{'训练' if is_training else '预测'}特征...")
-    ref = date(2014, 12, 18) if is_training else date(2014, 12, 19)
+    # 允许通过配置覆盖标签日
+    label_env = os.environ.get("LABEL_DATE")
+    if label_env:
+        ld = datetime.strptime(label_env, "%Y%m%d").date()
+    else:
+        ld = date(2014, 12, 18)
+    ref = ld if is_training else (ld + timedelta(days=1))
     return _build_features_for(candidates, ref)
 
 
@@ -367,6 +385,7 @@ def main():
     print("=" * 50)
 
     _check_conda_env()
+    _load_config_from_ini()
 
     # 1. 构建训练特征
     print("\n构建训练特征...")

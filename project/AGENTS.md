@@ -73,6 +73,18 @@
   - `exclude_day_purchases=0`
 - [training] 保持：`downsample_neg=1`, `neg_pos_ratio=1`, `neg_max_gap_days=3`, `use_group_kfold=1`, `n_splits=5`, `early_stopping=200`。
 - [eval] 保持：`eval_strategy=1`, `val_full=1`。
+
+### 2025-09-26 方案A（根因修复）规划与部分落地
+- 目的：修复“训练候选≠预测候选”导致的分布偏差与时间间隔捷径。
+- 候选对齐（已加入 1_candidate_generation）：
+  - `training.align_recall`（ENV: ALIGN_RECALL，默认 1）：训练候选与预测一致的召回窗口；
+  - `training.pos_filter_in_recall`（ENV: POS_FILTER_IN_RECALL，默认 1）：仅保留召回窗口内可召回的正例；
+  - 支持 `LABEL_DATE` 从 `config.ini` 读取，自动设置预测日为 +1 天。
+- 负样本分桶采样（已加入 3_lgbm_training）：
+  - `BUCKETED_NEG=1`、`RECENCY_BOUNDS="1,3,7"`：按 ui_days_since_last_action 分桶，桶内按 `NEG_POS_RATIO` 采样；
+  - 可叠加 `NEG_MAX_GAP_DAYS` 先做近邻过滤再分桶采样。
+- 时间验证（计划）：
+  - 后续将加入 `LABEL_DATE` 打通 1/2/3 脚本一键前移到 12-17 做时间验证。
 - Bugfix：OOF 与离线调参数据对齐。离线调参改为基于实际训练用的样本（负采样后）执行，避免长度不匹配错误；阈值日志打印兼容 q_level=None。
 - 新增策略强制开关（环境变量）：
   - `FORCE_STRATEGY=topk` 并可配 `TOPK_K=5`、`TOPK_M=2` 强制使用二阶段 Top-K；
