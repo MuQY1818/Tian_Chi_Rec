@@ -62,14 +62,29 @@
   - [viz] feature_viz, viz_only, viz_sample_per_class, viz_methods, viz_out, tsne_learning_rate, tsne_n_iter
 - 加载规则：仅在对应环境变量未设置时，才使用 INI 中的值（setdefault）。
 
+### 2025-09-27 推荐系统评估指标完善
+- 目的：完善推荐系统评估体系，认识到高AUC在推荐场景中是正常的。
+- 关键认知更新：
+  - **高AUC不是数据泄露**：在推荐系统中，0.98+的AUC是合理的，因为模型利用了强信号（加购、收藏等）
+  - **时间分布差异是有价值信号**：正负样本在时间间隔上的差异反映真实用户行为模式，不是泄露
+- 新增完整推荐系统评估指标（3_lgbm_training.py）：
+  - `calculate_recommendation_metrics()`：计算Precision@K、Recall@K、F1@K、Hit Ratio@K、NDCG@K
+  - `print_recommendation_metrics()`：格式化输出推荐指标表格
+  - 集成到训练流程：每折验证显示P@5/R@5/F1@5，OOF显示完整指标表格（K∈{1,3,5,10}）
+  - 解决"只看AUC无法评估推荐效果"的问题，提供更全面的性能视角
+- 保持原有配置：
+  - [strategy] cart_only策略，`max_submission=50000`
+  - [training] 负采样1:1，GroupKFold，early stopping
+  - 所有时间特征保留，不再认为是数据泄露
+
 ### 2025-09-26 策略更新（高精起步 A 案）
-- 目的：线上 F1 偏低，改为“cart_only 高精方案”。
+- 目的：线上 F1 偏低，改为"cart_only 高精方案"。
 - [strategy]
   - `force_strategy=cart_only`
   - `cart_days_max=1`
   - `strong_only=1`
   - `min_prob=0.09`
-  - `max_submission=60000`
+  - `max_submission=50000`
   - `exclude_day_purchases=0`
 - [training] 保持：`downsample_neg=1`, `neg_pos_ratio=1`, `neg_max_gap_days=3`, `use_group_kfold=1`, `n_splits=5`, `early_stopping=200`。
 - [eval] 保持：`eval_strategy=1`, `val_full=1`。

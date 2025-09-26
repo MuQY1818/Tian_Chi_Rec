@@ -201,7 +201,7 @@ def downsample_negatives_bucketed(
     return ds
 
 
-def kfold_train_predict(X, y, pred_features, feature_columns, n_splits=5, random_state=42, groups=None, early_stopping_rounds=100, fast_params=False, class_weight="balanced"):
+def kfold_train_predict(X, y, pred_features, feature_columns, train_df=None, n_splits=5, random_state=42, groups=None, early_stopping_rounds=100, fast_params=False, class_weight="balanced"):
     params = dict(
         objective="binary",
         metric="auc",
@@ -261,6 +261,23 @@ def kfold_train_predict(X, y, pred_features, feature_columns, n_splits=5, random
         folds_auc.append(auc)
         print(f"Fold {fold} AUC: {auc:.4f}, best_iter: {model.best_iteration_}")
 
+        # 计算推荐系统指标（验证集）
+        if train_df is not None:
+            val_user_ids = train_df.iloc[val_idx]['user_id']
+            try:
+                val_metrics = calculate_recommendation_metrics(
+                    y_true=y_val,
+                    y_pred=pd.Series(val_pred),
+                    user_ids=val_user_ids,
+                    top_k_list=[1, 3, 5]
+                )
+                print(f"  Precision@5: {val_metrics.get('precision@5', 0):.4f}, "
+                      f"Recall@5: {val_metrics.get('recall@5', 0):.4f}, "
+                      f"F1@5: {val_metrics.get('f1@5', 0):.4f}")
+            except Exception as e:
+                print(f"  推荐指标计算失败: {e}")
+                pass
+
         # 测试集预测累计平均
         test_pred += model.predict_proba(pred_features[feature_columns])[:, 1] / n_splits
         models.append(model)
@@ -275,6 +292,19 @@ def kfold_train_predict(X, y, pred_features, feature_columns, n_splits=5, random
 
     oof_auc = roc_auc_score(y, oof)
     print(f"OOF AUC: {oof_auc:.4f}; Folds AUC mean: {np.mean(folds_auc):.4f}")
+
+    # 计算整体OOF推荐系统指标
+    if train_df is not None:
+        try:
+            oof_metrics = calculate_recommendation_metrics(
+                y_true=y,
+                y_pred=pd.Series(oof),
+                user_ids=train_df['user_id'],
+                top_k_list=[1, 3, 5, 10]
+            )
+            print_recommendation_metrics(oof_metrics, "整体OOF评估指标")
+        except Exception as e:
+            print(f"OOF推荐指标计算失败: {e}")
 
     fi = pd.concat(fold_importances, axis=0)
     fi_group = fi.groupby("feature")["importance"].sum().sort_values(ascending=False).reset_index()
@@ -526,6 +556,131 @@ def _f1_from_counts(tp: int, pred_cnt: int, true_pos: int):
         return 0.0, precision, recall
     f1 = 2 * precision * recall / (precision + recall)
     return f1, precision, recall
+
+
+def calculate_recommendation_metrics(y_true: pd.Series, y_pred: pd.Series,
+                                   user_ids: pd.Series, top_k_list: list = [1, 3, 5, 10]):
+    """计算推荐系统完整评估指标
+
+    Args:
+        y_true: 真实标签 (0/1)
+        y_pred: 预测概率
+        user_ids: 用户ID
+        top_k_list: 要计算的K值列表
+
+    Returns:
+        dict: 包含各种评估指标的字典
+    """
+    metrics = {}
+
+    # 1. 整体分类指标
+    from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
+
+    auc = roc_auc_score(y_true, y_pred)
+    metrics['auc'] = auc
+
+    # 2. 按用户计算Top-K指标
+    df = pd.DataFrame({
+        'user_id': user_ids,
+        'y_true': y_true,
+        'y_pred': y_pred
+    })
+
+    for k in top_k_list:
+        precision_k_list = []
+        recall_k_list = []
+        hit_ratio_list = []
+
+        for user_id, group in df.groupby('user_id'):
+            # 按预测概率降序排序
+            group_sorted = group.sort_values('y_pred', ascending=False)
+            top_k_items = group_sorted.head(k)
+
+            # 计算该用户的指标
+            true_positives = top_k_items['y_true'].sum()
+            total_positives = group['y_true'].sum()
+
+            if k > 0:
+                precision_k = true_positives / k
+            else:
+                precision_k = 0.0
+
+            if total_positives > 0:
+                recall_k = true_positives / total_positives
+            else:
+                recall_k = 0.0
+
+            hit_ratio = 1.0 if true_positives > 0 else 0.0
+
+            precision_k_list.append(precision_k)
+            recall_k_list.append(recall_k)
+            hit_ratio_list.append(hit_ratio)
+
+        # 计算平均指标
+        metrics[f'precision@{k}'] = np.mean(precision_k_list)
+        metrics[f'recall@{k}'] = np.mean(recall_k_list)
+        metrics[f'hit_ratio@{k}'] = np.mean(hit_ratio_list)
+
+        # 计算F1
+        p_k = metrics[f'precision@{k}']
+        r_k = metrics[f'recall@{k}']
+        if p_k + r_k > 0:
+            metrics[f'f1@{k}'] = 2 * p_k * r_k / (p_k + r_k)
+        else:
+            metrics[f'f1@{k}'] = 0.0
+
+    # 3. 计算NDCG@K
+    for k in top_k_list:
+        ndcg_list = []
+        for user_id, group in df.groupby('user_id'):
+            group_sorted = group.sort_values('y_pred', ascending=False)
+            top_k_items = group_sorted.head(k)
+
+            # 计算DCG
+            dcg = 0.0
+            for i, (_, row) in enumerate(top_k_items.iterrows()):
+                relevance = row['y_true']
+                dcg += relevance / np.log2(i + 2)  # i+2 because log2(1)=0
+
+            # 计算IDCG (理想情况下的DCG)
+            ideal_relevances = sorted(group['y_true'].values, reverse=True)[:k]
+            idcg = 0.0
+            for i, relevance in enumerate(ideal_relevances):
+                idcg += relevance / np.log2(i + 2)
+
+            # 计算NDCG
+            if idcg > 0:
+                ndcg = dcg / idcg
+            else:
+                ndcg = 0.0
+
+            ndcg_list.append(ndcg)
+
+        metrics[f'ndcg@{k}'] = np.mean(ndcg_list)
+
+    return metrics
+
+
+def print_recommendation_metrics(metrics: dict, title: str = "推荐系统评估指标"):
+    """格式化打印推荐系统指标"""
+    print(f"\n{'='*50}")
+    print(f"{title}")
+    print(f"{'='*50}")
+
+    # AUC
+    print(f"AUC: {metrics.get('auc', 0):.4f}")
+
+    # Top-K指标
+    k_values = sorted([int(k.split('@')[1]) for k in metrics.keys() if 'precision@' in k])
+
+    print(f"\n{'指标':>12} " + " ".join([f"@{k:>2}" for k in k_values]))
+    print("-" * (12 + len(k_values) * 4))
+
+    for metric_type in ['precision', 'recall', 'f1', 'hit_ratio', 'ndcg']:
+        values = [f"{metrics.get(f'{metric_type}@{k}', 0):.3f}" for k in k_values]
+        print(f"{metric_type:>12}: " + " ".join([f"{v:>4}" for v in values]))
+
+    print(f"{'='*50}\n")
 
 
 def _eval_two_stage_on_sample(sample_df: pd.DataFrame, k: int, m: int):
@@ -945,6 +1100,7 @@ def main():
         y2,
         pred_features,
         feat_cols,
+        train_df=train_df_for_train,
         n_splits=N_SPLITS,
         random_state=42,
         groups=groups,
@@ -959,7 +1115,7 @@ def main():
         print(f"剔除 {len(dropped)} 个0重要性特征，重新训练...")
         test_pred, oof, fi_group, models = kfold_train_predict(
             X2[kept], y2, pred_features, kept,
-            n_splits=N_SPLITS, random_state=42, groups=groups,
+            train_df=train_df_for_train, n_splits=N_SPLITS, random_state=42, groups=groups,
             early_stopping_rounds=EARLY_STOPPING, fast_params=FAST_PARAMS, class_weight=class_weight
         )
         feat_cols = kept
